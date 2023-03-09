@@ -77,7 +77,7 @@ def getDist(x, y):
     # sum of the squared errors
     sumErr = 0
     for i in range(len(x)):
-        sumErr += np.power(x[i] - y[i], 2)
+      sumErr += np.power(x[i] - y[i], 2)
     # return square root of the sum
     return np.square(sumErr)
 
@@ -86,17 +86,17 @@ def getClusterMeans(data, assignation):
     """
     Calculate the mean of the data points for each cluster.
     """
-    height, width, channels = data.shape
-
-    new_assignation = assignation
-
     # convert data to a dataframe
     # using the assigned cluster as the index for each data point
-    df = pd.DataFrame(data, index=new_assignation)
+    df = pd.DataFrame(data, index=assignation)
     
     # np array records the mean for each cluster
     means = df.groupby(df.index).mean().values
-    
+    for i in range(len(means)):
+      cluster = df.groupby(df.index).get_group(i).values
+      shortest = np.argmin(np.abs(cluster - means[i]).sum(axis=1))
+      means[i] = cluster[shortest]
+
     return means
 
 
@@ -159,104 +159,34 @@ def coordinate_descent_kmeans(X, k, max_iter=100, tol=1e-4):
     centroids = data[randRowsIdx][:, :]
     
     # assigned cluster for each data point
-    clusters = [0 for i in range(n)]
-    
-    # distance to centroid for each data point
-    oldDist = np.zeros(n)
+    clusters = np.zeros(n)
+    dist = np.zeros(n)
     
     # Re-calculate centroids in each loop
     for i in range(max_iter):
-        
-        # assign data points to the nearest centroids
-        clusters, newDist = assignDataPoints(data, centroids)
-        
-        # check for empty clusters
-        # clusters = checkEmptyClusters(centroids, clusters, k, data)
+      # assign data points to the nearest centroids
+      clusters, newDist = assignDataPoints(data, centroids)
 
-        # update centroids to the cluster means
-        centroids = getClusterMeans(data, clusters)
-        
-        # check for convergence by comparing current and previous centroids
-        if np.allclose(newDist, oldDist, atol=tol):
-            break
-        else:
-            # update distances
-            oldDist = newDist
+      # check for empty clusters
+      clusters, newDist = checkEmptyClusters(data, centroids, clusters, newDist)
+
+      # update centroids to the cluster means
+      centroids = getClusterMeans(data, clusters)
+      
+      # check for convergence by comparing current and previous centroids
+      if np.allclose(newDist, dist, atol=tol):
+          break
+      else:
+          # update distances
+          dist = newDist
     
     return centroids, clusters
 
 #########################################################
 # Apply K-Means to image segmentation
 
-def loadImage(filename):
-  # Open image file
-  img = Image.open(filename)
-  # Convert image to numpy array
-  img_array = np.array(img)
-  return img_array
-
-def writeImage(img_array, filename):
-  # convert the image array back to shape H*W*3
-  output_img = img_array[:, :, :3]
-  img = Image.fromarray(output_img)
-  img.save(filename)
-
-def getStdArrayWith5Features(img_array):
-  # Get dimensions of the image
-  height, width, channels = img_array.shape
-  # new matrix with size H * W * 5
-  new_img_array = np.zeros((height, width, channels+2), dtype=int)
-
-  for i in range(height):
-    for j in range(width):
-      rgb = img_array[i, j]
-      features = np.zeros((5,))
-      # copy the rgb features
-      features[:3] = rgb
-      # add x and y coordinates as the additional features
-      features[3:] = [i, j]
-      # assign the updated features to the new matrix
-      new_img_array[i, j] = features
-  
-  # standardize the values of each feature
-  mean = np.mean(new_img_array, axis=0)
-  std = np.std(new_img_array, axis=0)
-  std[std == 0] = 1e-8  # replace 0 with a small constant to avoid division by zero
-  
-  std_img_array = (new_img_array - mean / std)
-  return std_img_array
-
-def generateSegImg(img_array, centroids, clusters):
-  '''
-  Use the cluster centers to generate the segmented image by 
-  replacing each data point’s color values with the closest center.
-  '''
-  # Get dimensions
-  height, width, channels = img_array.shape
-  # new matrix for the segmented image
-  seg_img_array = np.zeros((height, width, channels+2), dtype=int)
-  # reshape the clusters
-  cluster_map = clusters.reshape((height, width))
-
-  for i in range(height):
-    for j in range(width):
-      hx = np.zeros((5,)) # segmented pixel
-
-      # get the centroid
-      k = cluster_map[i, j]
-      centroid = centroids[k]
-      # replace the color to centroid's color
-      hx[:3] = centroid[:3]
-      # keep the same x and y coordinates
-      hx[3:] = [i, j]
-      # assign the new pixel to the segmented matrix
-      seg_img_array[i, j] = hx
-
-  return seg_img_array
-
-
-def checkEmptyClusters(centroids, clusters, k, data):
-  emptyClusters = np.where(np.bincount(clusters, minlength=k) == 0)[0]
+def checkEmptyClusters(data, centroids, clusters, dist):
+  emptyClusters = np.where(np.bincount(clusters, minlength=len(centroids)) == 0)[0]
   if len(emptyClusters) > 0:
     for j in emptyClusters:
       # find the nearest cluster to the centroid of the empty cluster
@@ -268,28 +198,116 @@ def checkEmptyClusters(centroids, clusters, k, data):
       farthestPoint = np.argmax(distances)
       
       # assign the empty cluster to the farthest point
+      newDist = getDist(centroids[j], data[farthestPoint])
+      dist[farthestPoint] = newDist
       clusters[farthestPoint] = j
-  return clusters
+
+  return clusters, dist
+
+
+def loadImage(filename):
+  # Open image file
+  img = Image.open(filename).convert("RGB")
+  # Convert image to numpy array
+  img_array = np.array(img)
+  return img_array
+
+def writeImage(img_array, filename):
+  img_array = img_array
+  img = Image.fromarray(img_array, mode="RGB")
+  img.save(filename)
+
+
+def standardizeData(img_array):
+  # standardize the values of each feature
+
+  # the last feature is the y coordinate, the std of y coordinate will 
+  # always be 0, because all the values of a variable are the same. 
+  # to avoid this, flat the matrix.
+  std_data = img_array.reshape(-1, img_array.shape[2])
+
+  mean = np.mean(std_data, axis=0)
+  std = np.std(std_data, axis=0)
+
+  std_data = (std_data - mean) / std
+
+  return std_data, std, mean
+
+def getArrayWithMoreFeatures(img_array):
+  # Get dimensions of the image
+  height, width, channels = img_array.shape
+  # new matrix with size H * W * (C+2)
+  new_img_array = np.zeros((height, width, channels+2), dtype=int)
+
+  for i in range(height):
+    for j in range(width):
+      rgb = img_array[i, j]
+      features = np.zeros((channels+2,))
+      # copy the rgb features
+      features[:channels] = rgb
+      # add x and y coordinates as the additional features
+      features[channels:] = [i, j]
+      # assign the updated features to the new matrix
+      new_img_array[i, j] = features
+  
+  return new_img_array
+
+def generateSegMatrix(std_matrix, centroids, clusters):
+  '''
+  Use the cluster centers to generate the segmented image by 
+  replacing each data point’s color values with the closest center.
+  '''
+  # new matrix for the segmented image
+  num, features = std_matrix.shape
+  seg_matrix = np.zeros((num, features))
+
+  for i in range(num):
+      hx = np.zeros((features,)) # segmented pixel
+
+      # get the centroid
+      k = clusters[i]
+      centroid = centroids[k]
+      # replace the color to centroid's color
+      hx[:features-2] = centroid[:features-2]
+      # keep the same x and y coordinates
+      hx[features-2:] = std_matrix[i][features-2:]
+      # assign the new pixel to the segmented matrix
+      seg_matrix[i] = hx
+
+  return seg_matrix
+
 
 
 def main(K, inputFile, outputFile):
-  # load image, get the 3d np array in size H * W * 3
+  # load image, get the 3d np array in shape (H, W, C)
   print(">>> Loading image from: ", inputFile)
   img_array = loadImage(inputFile)
 
   print(">>> Applying K-Means ")  
-  # standardize and convert img_array with 5 features
-  std_img_array = getStdArrayWith5Features(img_array)
+  # standardize and convert img_array with C+2 features
+  new_img_array = getArrayWithMoreFeatures(img_array)
+  # standardize the values in the 3d array to a 2d matrix with shape (H*W, C+2)
+  std_matrix, std, mean = standardizeData(new_img_array)
+  std_matrix = std_matrix.astype(float)
   # apply K-Means clustering from HW1
-  centroids, clusters = coordinate_descent_kmeans(std_img_array, K)
+  centroids, clusters = coordinate_descent_kmeans(std_matrix, K, max_iter=3)
   
   # generate the segmented image
-  print(">>> Generating  segmented image")  
-  seg_img_array = generateSegImg(img_array, centroids, clusters)
+  print(">>> Generating  segmented image")
+  seg_matrix = generateSegMatrix(std_matrix, centroids, clusters)
+
+  # de-standardize the matrix
+  destd_seg_matrix = (seg_matrix * std) + mean
+  # reshape matrix to 3d img array
+  destd_img = destd_seg_matrix.reshape(new_img_array.shape)
+  
+  # convert the image array back to shape H*W*C
+  output_img = destd_img[:, :, :img_array.shape[2]].astype(np.uint8)
 
   # wrtie the segmented image to file
   print(">>> Writing image into: ", outputFile)
-  writeImage(seg_img_array, outputFile)
+  writeImage(output_img, outputFile)
+  print(">>> Finish running program.")
 
 
 if __name__ == "__main__":
